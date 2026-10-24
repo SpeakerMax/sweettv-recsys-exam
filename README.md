@@ -8,7 +8,7 @@ The final approach is a weighted hybrid of collaborative, content-based, and gra
 
 - **Validation setup:** train on weeks 11-20 and evaluate on weeks 21-30.
 - **Final setup:** train on weeks 11-30 and predict weeks 31-42 (12 weeks).
-- **Candidate pool:** shows with at least one labelled airing in the target window. Repeats are allowed in the submission, but recommendations are deduplicated.
+- **Candidate pool:** shows with at least one labelled airing in the target window. Shows the user has already watched may be recommended again, because the target counts repeated viewing. Each user's five ids are distinct.
 - **Target:** for each user, the top five shows by number of fully watched airings, with ties broken by smaller `tv_show_id`. This is a ranking target, not a binary relevance label.
   - `st = overlap_seconds / airing_duration`
   - fully watched if `st >= 0.8`
@@ -112,7 +112,7 @@ The hybrid improves over the best single model on validation (PPR `alpha=0.7`, 0
 | HEAVY `3717184880213603078` | 360 | 127 | 0.4854 |
 | LIGHT `2860008338744295871` | 38 | 24 | 0.2767 |
 
-The report includes each user's top five shows, the final top five from every method, and a validation check on weeks 21-30 with per-method AP@5. A large unlabelled share indicates why pure content/schedule signals are noisy: much of the viewing time cannot be tied to a known show.
+The report includes each user's top five shows, the final top five from every method, and a validation check on weeks 21-30 with per-method AP@5. The heavy user spends almost half of his viewing time on unlabelled airtime, which no method can recommend. The schedule CBF still uses that time as evidence of when and on which channel he watches.
 
 ## How to reproduce
 
