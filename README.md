@@ -1,20 +1,18 @@
 # SweetTV TV Program Recommender
 
-Solution for the Kaggle competition **`sweettv-tv-program-recommender`**. The task is to recommend the five TV shows a user is most likely to watch in a future four-week period. The competition metric is **MAP@5**.
+Solution for the Kaggle competition **`sweettv-tv-program-recommender`**. The task is to recommend the five TV shows a user is most likely to watch in weeks 31-42 (a 12-week test period). The competition metric is **MAP@5**.
 
 The final approach is a weighted hybrid of collaborative, content-based, and graph-based rankers, with a popularity fallback for users without usable history. The best public/private Kaggle scores were **0.44670 / 0.44039**.
 
 ## Problem setup
 
-- **Train period:** weeks 11-30 (2020-03-09 through 2020-07-26).
-- **Validation period:** weeks 21-30.
-- **Test period:** weeks 31-42.
+- **Validation setup:** train on weeks 11-20 and evaluate on weeks 21-30.
+- **Final setup:** train on weeks 11-30 and predict weeks 31-42 (12 weeks).
 - **Candidate pool:** shows with at least one labelled airing in the target window. Repeats are allowed in the submission, but recommendations are deduplicated.
-- **Positive label:** a `(user, show)` pair is positive when the user fully watched at least one airing of the show.
+- **Target:** for each user, the top five shows by number of fully watched airings, with ties broken by smaller `tv_show_id`. This is a ranking target, not a binary relevance label.
   - `st = overlap_seconds / airing_duration`
   - fully watched if `st >= 0.8`
   - `tv_show_id == 0` is unlabelled airtime and is dropped.
-- **User labels:** for each user, the top five shows by fully watched airing count, with ties broken by smaller `tv_show_id`.
 
 The validation set has **4,030** users; **1,150** of them also appear in the test submission users.
 
@@ -29,7 +27,7 @@ The validation set has **4,030** users; **1,150** of them also appear in the tes
 ├── src/
 │   ├── config.py         # paths and constants
 │   ├── io.py             # raw data loading and caching
-│   ├── clock.py          # week/time helpers
+│   ├── clock.py          # clock alignment check
 │   ├── join.py           # view-to-airing interval join
 │   ├── labels.py         # candidate pool and target labels
 │   ├── metrics.py        # AP@5 / MAP@5
@@ -62,10 +60,10 @@ Raw data and intermediate caches are intentionally not committed (see `.gitignor
 The hybrid uses:
 
 ```
-0.7-PPR
-+ 1.00 * CBF schedule
-+ 0.50 * PureSVD(k=16)
-+ 0.00 * popularity
+1.0 * PPR(alpha=0.7)
++ 1.0 * CBF schedule
++ 0.5 * PureSVD(k=16)
++ 0.0 * popularity
 + 0.25 * CBF genre
 ```
 
@@ -103,6 +101,8 @@ The hybrid improves over the best single model on validation (PPR `alpha=0.7`, 0
 | `submissions/cbf_schedule.csv` | 57590795 | 0.41879 | 0.40339 |
 | `submissions/popularity.csv` | 57590797 | 0.31942 | 0.30620 |
 
+`hybrid.csv` (ref 57590784) is the designated final submission.
+
 ## Two-user case study
 
 `results/two_users.md` contains detailed examples for a heavy and a light user. The users were chosen at the 90th and 10th percentiles of fully watched airings in weeks 11-30.
@@ -116,14 +116,28 @@ The report includes each user's top five shows, the final top five from every me
 
 ## How to reproduce
 
-Requirements: Python 3.13, `numpy`, `pandas`, `scipy`, `pyarrow`, `implicit`.
+### Environment
+
+- macOS 26.2 on this machine; CPU: `Apple M4` (`sysctl -n machdep.cpu.brand_string`); 16 GB RAM.
+- Python 3.13.15
+- pandas 3.1.0, numpy 2.5.4, scipy 1.18.1, pyarrow 26.0.0, implicit 0.7.3, kaggle 2.2.5.
+- Random seeds: 42 for PureSVD and Implicit ALS.
 
 ```bash
 python3.13 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-Put the competition files in `data/raw/`:
+### Data
+
+Accept the competition rules on Kaggle first, then download and unzip:
+
+```bash
+.venv/bin/kaggle competitions download -c sweettv-tv-program-recommender -p data/raw
+unzip -o data/raw/sweettv-tv-program-recommender.zip -d data/raw
+```
+
+The resulting files under `data/raw/` are:
 
 - `dataset11-30.csv`
 - `export_arh_11-20-final.csv`
@@ -131,7 +145,9 @@ Put the competition files in `data/raw/`:
 - `export_arh_31-42-final.csv`
 - `submission.csv`
 
-Then run the pipeline in order:
+### Pipeline
+
+Run the steps in order:
 
 ```bash
 .venv/bin/python run_step1.py
@@ -144,10 +160,21 @@ Step 1 validates the join, labels, and baselines. Step 2 writes the validation s
 
 The cached score matrices in `data/cache/scores/` make Step 3/4 re-runs fast; the first run is dominated by the view-to-airing join and the PPR/SVD fits.
 
+### Runtimes
+
+On the environment above:
+
+| Step | Runtime |
+|---|---:|
+| `run_step1.py` | 9.9 s cold; 2.4 s warm |
+| `run_step2.py` | 255.7 s |
+| `run_step3.py` | 382.1 s total (360.0 s grid, 19.8 s final rebuild) |
+| `run_step4.py` | 1.5 s |
+
 ## Notes and limitations
 
 - `st >= 0.8` is a proxy for "fully watched"; it does not capture intentional rewatching or background viewing.
-- About two test users have no usable history and fall back to popularity.
-- ALS performs poorly because the interaction matrix is extremely sparse and the confidence weighting favors popular shows.
+- Two test users have no usable history and fall back to popularity.
+- ALS performs poorly because it fits a binary preference: every watched show has preference 1, and confidence only weights the loss. A film watched once can therefore rank next to a daily news show.
 - Genre CBF is weak: many shows share broad categories, so genre alone is not discriminative. Schedule CBF is substantially better because it captures channel and time-slot preferences.
 - The final hybrid was selected on weeks 21-30 and then refit on weeks 11-30; the Kaggle scores are the out-of-sample check.
